@@ -17,13 +17,21 @@ log = structlog.get_logger(__name__)
 
 _SELECT = text(
     "SELECT slug, brand_ids, subject, required_hashtags, allowed_sources, submit_platforms, "
-    "disclosure, submit_window_min, max_clips_per_day, active "
+    "disclosure, submit_window_min, max_clips_per_day, active, kind, discovery "
     "FROM clipnet_campaign WHERE slug = :slug"
 )
 
 
 def _tup(v: Any) -> tuple[str, ...]:
     return tuple(v or ())
+
+
+def _json(v: Any) -> dict:
+    if isinstance(v, str):
+        import json
+
+        return json.loads(v or "{}")
+    return dict(v or {})
 
 
 @dataclass(frozen=True)
@@ -38,6 +46,10 @@ class Campaign:
     submit_window_min: int
     max_clips_per_day: int
     active: bool
+    # 'campaign' = a paid Content Rewards campaign (provided sources, subject gate);
+    # 'organic'  = the brand's own growth from discovered independent creators (CLIPNET-DISCOVER).
+    kind: str = "campaign"
+    discovery: Mapping[str, Any] | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> Campaign:
@@ -52,7 +64,13 @@ class Campaign:
             submit_window_min=int(row.get("submit_window_min") or 10),
             max_clips_per_day=int(row.get("max_clips_per_day") or 5),
             active=bool(row.get("active")),
+            kind=row.get("kind") or "campaign",
+            discovery=_json(row.get("discovery")),
         )
+
+    @property
+    def is_organic(self) -> bool:
+        return self.kind == "organic"
 
     def allows_source(self, source_key: str) -> bool:
         """Exact match on '<platform>:<id>'. An empty allow-list allows nothing (fail closed)."""

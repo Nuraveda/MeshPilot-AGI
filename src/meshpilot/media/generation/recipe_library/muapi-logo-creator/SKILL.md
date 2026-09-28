@@ -69,7 +69,7 @@ bash scripts/create-logo.sh \
 - **Production-Ready**: **MANDATORY** - Solid white/black background only. No textures, no desks, no mockups (t-shirts/business cards).
 - **Legibility**: Avoid thin lines or complex overlapping that disappears at small scales.
 - **Minimalism**: Limit the mark to a maximum of 3 core geometric elements.
-- **No Artifacting**: Use Flux for accurate brand name rendering within the logo.
+- **No Artifacting**: Use Nano Banana Pro for accurate brand name rendering within the logo.
 
 ---
 

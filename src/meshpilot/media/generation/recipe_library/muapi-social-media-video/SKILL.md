@@ -90,7 +90,7 @@ Transform the storyboard into a **technical Director Brief** for Seedance 2.0.
 | Use Case | Recommended Model | Why |
 |:---|:---|:---|
 | Photorealistic product/scene | `google-imagen4-ultra` | Highest realism, great lighting |
-| Concept art / stylized | `flux-kontext-pro-t2i` | Creative fidelity, style adherence |
+| Concept art / stylized | `nano-banana-pro` | Creative fidelity, style adherence |
 | Fastest turnaround | `google-imagen4-fast` | Speed with good quality |
 | Highly detailed/editorial | `hidream-i1-full` | Fine detail, editorial quality |
 | Character with identity | `ideogram-v3-t2i` | Strong text + character rendering |

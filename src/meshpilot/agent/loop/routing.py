@@ -44,6 +44,23 @@ import os
 #
 # Every slug below returned real text on three consecutive live calls, 2026-09-02, WITH those
 # settings in force. Re-probe rather than trusting this comment.
+# ⚠️ 2026-09-28: the operator REMOVED the Allowed Providers restriction — every provider is now
+# eligible, so the allowlist notes above are HISTORY. Data Training toggles are now the ONLY privacy
+# filter; keep them OFF. Cheap third-party hosts often serve fp4/fp8 quantisations, and OpenRouter
+# leans price-first, so a newly-eligible host can change output quality with no code change here.
+#
+# ROUTER-LUNA 2026-09-28 — `simple` flipped to openai/gpt-6-luna (Haiku kept as fallback), and the
+# no-tier default + clip picker + discovery screen moved Sonnet 5 → gpt-6-luna-pro. Bake-off on the
+# real clip-pick prompt (with traps), a tool-use decision and brand-safe copy, 2 runs each, cost from
+# OpenRouter's own `usage.cost`:
+#   gpt-6-luna      5/6*  $0.00012/task      gpt-6-luna-pro  6/6  $0.00060/task
+#   claude-sonnet-5 6/6   ~$0.0023/task      deepseek-v4-pro 6/6  $0.0020/task
+#   gemini-3.8-flash 4/6* $0.0058/task       z-ai/glm-5.3    6/6  $0.0080/task (uncapped reasoning)
+#   (* = picked 1 of 2 valid clips, which the prompt allows; no model picked a trap.)
+# ⚠️ Per-TOKEN price misleads: glm-5.3 and gemini-3.8-flash emitted ~1,500-1,700 reasoning tokens vs
+# ~185 for sonnet, so they cost MORE per task. `complex` (glm-5.3 first) is fine for the job scorer,
+# which sends effort=low, but the BRAIN LOOP on `complex` sends no effort cap. Measure a real brain
+# loop before reordering `complex`; that was left out of this change on purpose.
 TIERS: dict[str, list[str]] = {
     # `critical` stays quality-first: an irreversible decision is the wrong place to save $0.008.
     # `complex` is COST-FIRST — z-ai/glm-5.3 ahead of claude-sonnet-5, measured, see the note below.
@@ -52,7 +69,7 @@ TIERS: dict[str, list[str]] = {
     "critical": ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol"],
     "complex":  ["z-ai/glm-5.3", "anthropic/claude-sonnet-5", "anthropic/claude-sonnet-4.6"],
     "moderate": ["z-ai/glm-5.2", "openai/gpt-5.6-luna", "deepseek/deepseek-v4-pro"],
-    "simple":   ["anthropic/claude-haiku-4.5", "z-ai/glm-5.3-flash", "google/gemini-2.5-flash"],
+    "simple":   ["openai/gpt-6-luna", "anthropic/claude-haiku-4.5", "z-ai/glm-5.3-flash"],
 }
 
 # COST-FIRST ON `complex` — 2026-09-15. The operator asked for cheapest-first; a first attempt was

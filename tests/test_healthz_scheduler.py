@@ -42,10 +42,21 @@ async def test_healthz_leaks_no_job_or_brand_detail(monkeypatch):
     monkeypatch.setattr(server, "_scheduler_lag", _lag)
     out = await server.healthz()
     assert set(out["scheduler"]) <= {"cron_enabled", "last_run_age_s", "worst_overdue_s", "error"}
-    assert set(out) == {"status", "service", "version", "dispatch_mode", "scheduler"}
+    assert set(out) == {"status", "service", "version", "build", "dispatch_mode", "scheduler"}  # build: OPS-BOX-1, a commit sha
 
 
 def test_health_is_the_same_endpoint_as_healthz():
     """Cloud Run swallows any path ending in `z`, so `/health` must serve the identical handler."""
     routes = {r.path: r.endpoint for r in server.app.routes if getattr(r, "path", None) in ("/health", "/healthz")}
     assert routes["/health"] is routes["/healthz"] is server.healthz
+
+
+async def test_healthz_reports_the_running_build_for_deploy_proof(monkeypatch):
+    """OPS-BOX-1: CI proves a box deploy landed by reading this back."""
+    async def _lag():
+        return {}
+    monkeypatch.setattr(server, "_scheduler_lag", _lag)
+    monkeypatch.setenv("MESHPILOT_BUILD", "abc1234")
+    assert (await server.healthz())["build"] == "abc1234"
+    monkeypatch.delenv("MESHPILOT_BUILD")
+    assert (await server.healthz())["build"] is None

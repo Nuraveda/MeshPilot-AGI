@@ -70,7 +70,7 @@ bash scripts/generate-mockup.sh \
 - **Device Realism**: **MANDATORY** - Do not show hands, physical phones, or desks. Generate pure UI/UX mockups only.
 - **Accessibility**: Avoid low-contrast text on bright backgrounds.
 - **Complexity**: Keep "Atoms" consistent across a single page generation.
-- **Text Rendering**: Use Flux for legible headers; specify placeholder text for smaller body copy.
+- **Text Rendering**: Use Nano Banana Pro for legible headers; specify placeholder text for smaller body copy.
 
 ---
 

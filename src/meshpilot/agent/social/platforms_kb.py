@@ -34,7 +34,8 @@ async def profile(brand_id: str, platform: str, *, engine: Any = None) -> dict:
         p = (platform or "").lower()
         async with eng.connect() as conn:
             row = (await conn.execute(
-                text("SELECT platform, audience, register, max_chars, hashtags, avoid "
+                text("SELECT platform, audience, register, max_chars, hashtags, avoid, "
+                     "post_times, post_tz, min_gap_hours, hashtag_max "
                      "FROM platform_profile WHERE platform = :p "
                      "  AND brand_id IN (:b, :default_brand) "
                      "ORDER BY (brand_id = :b) DESC LIMIT 1"),

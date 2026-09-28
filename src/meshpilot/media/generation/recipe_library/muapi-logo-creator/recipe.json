@@ -1,6 +1,6 @@
 {
   "slug": "muapi-logo-creator",
-  "description": "Engineer professional-grade brand logos using geometric primitives and negative space - minimalist, scalable marks via muapi.ai (Flux).",
+  "description": "Engineer professional-grade brand logos using geometric primitives and negative space - minimalist, scalable marks via muapi.ai (nano-banana-pro).",
   "triggers": ["logo design", "brand logo", "logo creator", "brand mark", "minimalist logo", "logo generator"],
   "inputs": [
     {"name": "brand", "type": "text", "required": true, "description": "Brand name."},
@@ -14,7 +14,7 @@
       "prompt": "Write a Geometric Minimalist logo brief for brand '{{brand}}', concept '{{concept}}', style '{{style}}', color palette '{{color}}'. Reduce the concept to at most 3 core geometric primitives (circle/square/triangle). Explicitly instruct use of negative space for a secondary meaning. Specify: solid colors, monochromatic/dual-tone palette, flat design only - no gradients, no 3D, no textures. Composition: isolated on a solid white background, perfectly centered, legible from 16px favicon to billboard. Render the brand name in clean, accurate typography. No mockups (t-shirts, business cards, desks)."
     },
     {
-      "id": "render", "op": "image.generate", "output": "logo_image", "model": "flux-2-dev", "prompt_mode": "template",
+      "id": "render", "op": "image.generate", "output": "logo_image", "model": "nano-banana-pro", "prompt_mode": "template",
       "prompt": "{{logo_brief}}",
       "params": {"aspect_ratio": "1:1"}
     }

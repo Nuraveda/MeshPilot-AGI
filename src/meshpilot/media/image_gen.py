@@ -1,11 +1,20 @@
-"""AI image generation via fal.ai.
+"""AI image generation via MUapi.
 
 Primary use: LinkedIn image posts (and later Twitter/Instagram) for text brands
 that want visual pairing. Generates a PNG from a prompt and returns the local
 path; the publisher uploads the image.
 
-Default model is `fal-ai/flux/schnell` — fast (~1-2s) and cheap
-(~$0.003/image). Swap via FAL_IMAGE_MODEL in .env. All calls go through a
+Default model is `nano-banana-pro` (Gemini 3 Pro Image) via MUapi. FLUX was the
+default until 2026-09-26 and is GONE: at ~$0.003/image it was optimising the wrong
+thing. A thumbnail is the single image that decides whether anyone clicks, and FLUX
+cannot compose a scene or render legible type. nano-banana-pro costs ~$0.13 and can.
+
+⚠️ EVERY image produced here is a PLATE: background, subject, light, texture — and
+NO TEXT AND NO LOGOS. Not because the model cannot draw letters (nano-banana-pro is
+good at them) but because it cannot be RELIED ON to, and it does not have the brand's
+mark, palette or font. Type and logos are composited afterwards with Pillow
+(media/render/), which is exact and repeatable. "AI for visuals, code for typography."
+Swap the model via MUAPI_IMAGE_MODEL. All calls go through a
 tenacity retry so transient network/503s don't drop an image.
 
 Outputs land under `{settings.video_storage_path}/images/{brand_id}/` with a
@@ -31,27 +40,63 @@ from meshpilot.config import settings
 
 log = structlog.get_logger(__name__)
 
-# fal.ai's FLUX models accept a named aspect ratio. Map our semantic names
-# to what the SDK expects. These are the three we actually use for social.
+# MUapi takes the ratio verbatim. ⚠️ It must be passed as a PARAMETER — asking for
+# "16:9 landscape" in the prompt text is ignored and you get a square back (measured
+# 2026-09-26 on nano-banana-pro).
 _ASPECT_MAP: dict[str, str] = {
-    "1:1":  "square_hd",          # 1024x1024 — LinkedIn default, safe everywhere
-    "4:5":  "portrait_4_3",       # LinkedIn/IG portrait
-    "16:9": "landscape_16_9",     # Twitter/YouTube thumbnail
+    "1:1":  "1:1",
+    "4:5":  "4:5",
+    "16:9": "16:9",               # YouTube thumbnail / Twitter
 }
+
+# Appended to EVERY plate. The old code only sent this to Leonardo, so the FLUX path
+# happily baked gibberish captions into images the caller was about to draw real text
+# onto.
+#
+# ⚠️ ADVISORY, NOT ENFORCED. nano-banana-pro is a Gemini-family model with no true negative
+# conditioning — MUapi folds this into the prompt, so naming a thing can even summon it.
+# Measured 2026-09-26: a plate asked for empty negative space still came back with faint
+# hallucinated game-HUD fragments (minimap, ammo counter). That is tolerable only because
+# `media/render/composite.prepare()` scrims the backdrop before any type is drawn, which
+# sinks residual junk behind the copy. Do not drop the scrim on the assumption that plates
+# come back clean — they do not.
+MUAPI_POLL_ATTEMPTS = 60
+MUAPI_POLL_INTERVAL_S = 4.0
+
+_PLATE_NEG = (
+    "text, letters, words, captions, subtitles, typography, watermark, signature, "
+    "logo, brand mark, numbers, UI, interface, borders, frame"
+)
 
 AspectRatio = Literal["1:1", "4:5", "16:9"]
 
 
 class ImageGenError(RuntimeError):
-    """Raised when fal.ai returns no image or the download fails."""
+    """Raised when the provider returns no image or the download fails."""
 
 
 async def generate_image(
     prompt: str,
     brand_id: str,
     aspect: AspectRatio = "1:1",
+    *,
+    plate: bool = False,
 ) -> pathlib.Path:
-    """Generate an image via fal.ai, download it, return the local path.
+    """Generate an image via MUapi, download it, return the local path.
+
+    `plate=True` asks for a TEXT-FREE backdrop for the Pillow card compositor, which draws the
+    typography itself. The default renders FINISHED artwork, headline included.
+
+    ⚠️ The default flipped 2026-09-26, and the reason is worth keeping. The no-text rule was
+    inherited from FLUX, which baked gibberish captions into images. nano-banana-pro is a
+    Gemini-family model and is good at typography — measured side by side on the same brief, it
+    spelled "CONQUEROR LOBBY", "17 KILLS" and "1V4 CLUTCH" correctly with gradients, outlines and
+    drop shadows, while the Pillow card rendered flat type that the operator rejected outright.
+    Suppressing text by default was throwing away the better output to avoid a FLUX-era problem
+    this model does not have.
+
+    Pillow is still the ONLY way a real brand mark or a social icon reaches an image: the model
+    approximates a logo, and an approximated logo is worse than none.
 
     Raises ImageGenError on failure. DISPATCH_MODE=dry_run short-circuits with
     a placeholder path that doesn't exist on disk (caller should skip upload
@@ -62,14 +107,15 @@ async def generate_image(
         log.info("image_gen.dry_run", brand_id=brand_id, prompt=prompt[:80])
         return pathlib.Path(f"/tmp/dry-run-image-{uuid.uuid4().hex[:8]}.png")
 
-    if not s.fal_api_key:
-        raise ImageGenError("FAL_API_KEY is not set")
+    if not s.muapi_api_key:
+        raise ImageGenError("MUAPI_API_KEY is not set")
 
     out_dir = pathlib.Path(s.video_storage_path) / "images" / brand_id
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{uuid.uuid4().hex}.png"
 
-    image_url = await _generate_via_fal(prompt, aspect, model=s.fal_image_model)
+    image_url = await _generate_via_muapi(prompt, aspect, model=s.muapi_image_model,
+                                          plate=plate)
     await _download(image_url, out_path)
 
     log.info(
@@ -87,39 +133,56 @@ async def generate_image(
     wait=wait_exponential(multiplier=1, min=2, max=15),
     retry=retry_if_exception_type((httpx.HTTPError, asyncio.TimeoutError, ImageGenError)),
 )
-async def _generate_via_fal(prompt: str, aspect: AspectRatio, model: str) -> str:
-    """Call fal.ai, return the image URL. Retries on network/ImageGenError."""
-    # Run the sync fal-client call off the event loop so the graph stays
-    # responsive even if fal is slow.
-    # fal-client reads FAL_KEY from env; settings loader sets the env var at
-    # startup via pydantic_settings, but to be safe we also set it here.
-    import os
+async def _generate_via_muapi(prompt: str, aspect: AspectRatio, model: str,
+                              *, plate: bool = False) -> str:
+    """Submit to MUapi, poll for the result, return the image URL.
 
-    import fal_client
-    if settings().fal_api_key and not os.environ.get("FAL_KEY"):
-        os.environ["FAL_KEY"] = settings().fal_api_key
+    MUapi is submit+poll, not request/response: POST {base}/{model} returns a
+    request_id, then GET {base}/predictions/{id}/result until it completes. The model
+    slug goes straight in the path, so a new model needs no code change.
+    """
+    import json as _json
 
-    image_size = _ASPECT_MAP.get(aspect, "square_hd")
+    s_ = settings()
+    key = s_.muapi_api_key
+    if not key:
+        raise ImageGenError("MUAPI_API_KEY is not set")
+    base = (s_.muapi_api_base or "https://api.muapi.ai/api/v1").rstrip("/")
+    headers = {"x-api-key": key, "Content-Type": "application/json"}
+    payload = {
+        "prompt": prompt,
+        # PARAMETER, not prose — see _ASPECT_MAP.
+        "aspect_ratio": _ASPECT_MAP.get(aspect, "1:1"),
+        # Only a plate suppresses type — finished artwork is SUPPOSED to carry it.
+        **({"negative_prompt": _PLATE_NEG} if plate else {}),
+    }
 
-    def _run() -> dict:
-        return fal_client.run(
-            model,
-            arguments={
-                "prompt": prompt,
-                "image_size": image_size,
-                "num_images": 1,
-            },
-        )
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=180.0)) as client:
+        sub = await client.post(f"{base}/{model}", headers=headers, content=_json.dumps(payload))
+        if sub.status_code >= 400:
+            raise ImageGenError(f"muapi submit {model} -> {sub.status_code}: {sub.text[:300]}")
+        rid = (sub.json() or {}).get("request_id")
+        if not rid:
+            raise ImageGenError(f"muapi submit {model}: no request_id in {sub.text[:200]}")
 
-    result = await asyncio.to_thread(_run)
-    images = result.get("images") or []
-    if not images:
-        raise ImageGenError(f"fal.ai returned no images for model={model}")
-
-    url = images[0].get("url") if isinstance(images[0], dict) else None
-    if not url:
-        raise ImageGenError(f"fal.ai image had no URL: {images[0]!r}")
-    return url
+        # Generous ceiling: nano-banana-pro is slower than FLUX was, which is the
+        # trade being made deliberately.
+        for _ in range(MUAPI_POLL_ATTEMPTS):
+            await asyncio.sleep(MUAPI_POLL_INTERVAL_S)
+            res = await client.get(f"{base}/predictions/{rid}/result", headers=headers)
+            if res.status_code >= 400:
+                raise ImageGenError(f"muapi poll {rid} -> {res.status_code}: {res.text[:200]}")
+            body = res.json() or {}
+            status = body.get("status")
+            if status == "completed":
+                outs = body.get("outputs") or []
+                if not outs:
+                    raise ImageGenError(f"muapi {model} completed with no outputs")
+                return outs[0]
+            if status == "failed":
+                raise ImageGenError(f"muapi {model} failed: {str(body)[:300]}")
+    raise ImageGenError(f"muapi {model} did not finish within "
+                        f"{MUAPI_POLL_ATTEMPTS * MUAPI_POLL_INTERVAL_S:.0f}s")
 
 
 async def _download(url: str, out_path: pathlib.Path) -> None:
@@ -168,8 +231,8 @@ async def generate_background(
     Leonardo doesn't bake gibberish typography in. The caller (carousel /
     quote_card) overlays real copy with Pillow afterward.
 
-    Falls back to FLUX-via-fal if LEONARDO_API_KEY isn't set, so existing
-    deployments keep working while we cut over.
+    Without LEONARDO_API_KEY it uses MUapi (nano-banana-pro) instead — never a
+    weaker model, and never one that writes its own text.
     """
     s = settings()
     if s.is_dry_run:
@@ -177,9 +240,13 @@ async def generate_background(
         return pathlib.Path(f"/tmp/dry-run-bg-{uuid.uuid4().hex[:8]}.png")
 
     if not s.leonardo_api_key:
-        # Soft fallback to FLUX so the pipeline still works without Leonardo.
-        log.warning("image_gen.bg.no_leonardo_key.falling_back_to_flux")
-        return await generate_image(prompt=prompt, brand_id=brand_id, aspect=aspect)
+        # No Leonardo key: go straight to MUapi rather than a weaker model. The old
+        # code fell back to FLUX here, which is how a "background" ended up with
+        # baked-in gibberish captions under the Pillow text.
+        log.info("image_gen.bg.no_leonardo_key.using_muapi", model=s.muapi_image_model)
+        # plate=True: this is a BACKDROP for the Pillow compositor, so it must stay text-free
+        # even though finished artwork is now the default everywhere else.
+        return await generate_image(prompt=prompt, brand_id=brand_id, aspect=aspect, plate=True)
 
     out_dir = pathlib.Path(s.video_storage_path) / "images" / brand_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -277,213 +344,3 @@ async def _generate_via_leonardo(
                 raise ImageGenError(f"Leonardo generation FAILED: {body!r}")
 
     raise ImageGenError(f"Leonardo generation {gen_id} timed out after 90s")
-
-
-# ---------------------------------------------------------------------------
-# Designed images via OpenAI gpt-image-2 (via fal.ai)
-#
-# Use for posts that need TEXT RENDERED INSIDE the image — quote cards,
-# stat reveals, carousel slides. gpt-image-2 nails short-to-medium text
-# first-try with strong design composition; FLUX-schnell is better for
-# abstract backgrounds where Pillow overlays the text.
-#
-# Pricing (fal.ai, Apr 2026): low ≈ $0.01, medium ≈ $0.04, high ≈ $0.17.
-# ---------------------------------------------------------------------------
-
-# fal.ai's gpt-image-2 aspect ratios use named enums, not pixel dimensions.
-_GPT_IMAGE_2_ASPECT: dict[str, str] = {
-    "1:1":  "square_hd",
-    "4:5":  "portrait_4_3",      # closest to 4:5 offered
-    "4:3":  "portrait_4_3",
-    "16:9": "landscape_16_9",
-}
-
-DesignQuality = Literal["low", "medium", "high"]
-
-
-async def generate_designed_image(
-    prompt: str,
-    brand_id: str,
-    *,
-    aspect: AspectRatio = "1:1",
-    quality: DesignQuality = "medium",
-    model: str = "openai/gpt-image-2",
-) -> pathlib.Path:
-    """Generate a fully designed image (text-inside-image) via gpt-image-2.
-
-    Unlike generate_image() which produces bare backgrounds for Pillow
-    overlay, this function returns an image with the text already rendered
-    in the composition. Use it for quote cards, carousel slides, and any
-    single-image post where the typography IS the design.
-
-    Quality tiers roughly (fal.ai):
-        low    — $0.01/image — ok for drafts
-        medium — $0.04/image — default, ships fine
-        high   — $0.17/image — hero posts that need to land on first scroll
-
-    Raises ImageGenError on failure. dry_run returns a placeholder path.
-    """
-    s = settings()
-    if s.is_dry_run:
-        log.info(
-            "image_gen.designed.dry_run",
-            brand_id=brand_id, prompt=prompt[:80], quality=quality,
-        )
-        return pathlib.Path(f"/tmp/dry-run-designed-{uuid.uuid4().hex[:8]}.png")
-
-    out_dir = pathlib.Path(s.video_storage_path) / "images" / brand_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{uuid.uuid4().hex}.png"
-
-    # Provider routing: prefer OpenAI direct when OPENAI_API_KEY is set.
-    # Direct route is the same model OpenAI publishes (gpt-image-1 in the
-    # public catalog; "gpt-image-2" if/when GA), accessed via the Images
-    # API. Fal.ai is the historical fallback path; we route to it only
-    # when the OpenAI key isn't configured.
-    if s.openai_api_key:
-        await _generate_via_openai_direct(
-            prompt=prompt, aspect=aspect, quality=quality, out_path=out_path,
-        )
-        provider = "openai-direct"
-    else:
-        if not s.fal_api_key:
-            raise ImageGenError("Neither OPENAI_API_KEY nor FAL_API_KEY is set")
-        image_url = await _generate_via_gpt_image_2(
-            prompt=prompt, aspect=aspect, quality=quality, model=model,
-        )
-        await _download(image_url, out_path)
-        provider = f"fal:{model}"
-
-    log.info(
-        "image_gen.designed.done",
-        brand_id=brand_id, provider=provider, quality=quality,
-        path=str(out_path), size_kb=out_path.stat().st_size // 1024,
-    )
-    return out_path
-
-
-# ---------------------------------------------------------------------------
-# OpenAI Images API direct (preferred when OPENAI_API_KEY is set)
-# ---------------------------------------------------------------------------
-
-# OpenAI's Images API takes a discrete `size` string. Map our aspect names
-# to the closest officially-supported size on gpt-image-1.
-_OPENAI_SIZE_MAP: dict[str, str] = {
-    "1:1":  "1024x1024",
-    "4:5":  "1024x1536",   # closest portrait — used for LI carousel slides
-    "4:3":  "1024x1536",
-    "16:9": "1536x1024",
-}
-
-# OpenAI's image models default to b64_json output. Some accounts/models
-# also support `url`; b64 is universally supported, so use that.
-# gpt-image-2 is the current public model (as of Apr 2026, replaced 1).
-_OPENAI_IMAGE_MODEL = "gpt-image-2"
-
-
-@retry(
-    reraise=True,
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    retry=retry_if_exception_type(
-        (httpx.HTTPError, asyncio.TimeoutError, ImageGenError)
-    ),
-)
-async def _generate_via_openai_direct(
-    *,
-    prompt: str,
-    aspect: AspectRatio,
-    quality: DesignQuality,
-    out_path: pathlib.Path,
-) -> None:
-    """Call OpenAI Images API directly. Decodes the b64 response, writes
-    the PNG bytes to out_path."""
-    import base64
-    s = settings()
-    api_key = s.openai_api_key
-    size = _OPENAI_SIZE_MAP.get(aspect, "1024x1024")
-    payload = {
-        "model": _OPENAI_IMAGE_MODEL,
-        "prompt": prompt,
-        "size": size,
-        "quality": quality,
-        "n": 1,
-    }
-    async with httpx.AsyncClient(timeout=300) as client:
-        resp = await client.post(
-            "https://api.openai.com/v1/images/generations",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-    if resp.status_code >= 400:
-        raise ImageGenError(
-            f"OpenAI Images API {resp.status_code}: {resp.text[:400]}"
-        )
-    data = resp.json().get("data") or []
-    if not data:
-        raise ImageGenError(f"OpenAI Images API returned no data: {resp.text[:300]}")
-    b64 = data[0].get("b64_json")
-    if not b64:
-        # Some models return `url` instead — handle that too.
-        url = data[0].get("url")
-        if url:
-            await _download(url, out_path)
-            return
-        raise ImageGenError(
-            f"OpenAI Images API: no b64_json or url in response: {data[0]!r}"
-        )
-    out_path.write_bytes(base64.b64decode(b64))
-
-
-@retry(
-    reraise=True,
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    retry=retry_if_exception_type((httpx.HTTPError, asyncio.TimeoutError, ImageGenError)),
-)
-async def _generate_via_gpt_image_2(
-    *, prompt: str, aspect: AspectRatio, quality: DesignQuality, model: str,
-) -> str:
-    """fal.ai call for gpt-image-2. gpt-image-2 takes longer than FLUX
-    (thinking phase), so we use a generous timeout inside fal_client.run."""
-    import os
-
-    import fal_client
-
-    if settings().fal_api_key and not os.environ.get("FAL_KEY"):
-        os.environ["FAL_KEY"] = settings().fal_api_key
-
-    # Prefer explicit pixel dimensions over named presets — the named
-    # `portrait_4_3` preset on fal returns 768x1024, which downscales blurry
-    # text on LinkedIn's 1080+ render. Asking for full-HD portrait gives the
-    # model more pixels to render type into.
-    px_map: dict[str, dict[str, int]] = {
-        "1:1":  {"width": 1024, "height": 1024},
-        "4:5":  {"width": 1080, "height": 1350},   # LinkedIn carousel native
-        "4:3":  {"width": 1080, "height": 1440},
-        "16:9": {"width": 1280, "height": 720},
-    }
-    image_size: dict | str = px_map.get(aspect) or _GPT_IMAGE_2_ASPECT.get(aspect, "square_hd")
-
-    def _run() -> dict:
-        return fal_client.run(
-            model,
-            arguments={
-                "prompt": prompt,
-                "image_size": image_size,
-                "quality": quality,
-                "num_images": 1,
-            },
-        )
-
-    result = await asyncio.to_thread(_run)
-    images = result.get("images") or []
-    if not images:
-        raise ImageGenError(f"gpt-image-2 returned no images for prompt={prompt[:80]!r}")
-    url = images[0].get("url") if isinstance(images[0], dict) else None
-    if not url:
-        raise ImageGenError(f"gpt-image-2 image had no URL: {images[0]!r}")
-    return url

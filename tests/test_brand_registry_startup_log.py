@@ -124,7 +124,7 @@ async def test_healthz_still_carries_no_brand_information(monkeypatch):
 
     monkeypatch.setattr(server, "_scheduler_lag", _lag)
     out = await server.healthz()
-    assert set(out) == {"status", "service", "version", "dispatch_mode", "scheduler"}
+    assert set(out) == {"status", "service", "version", "build", "dispatch_mode", "scheduler"}  # build: OPS-BOX-1, a commit sha
     assert "brand" not in json.dumps(out).lower()
 
 

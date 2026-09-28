@@ -156,7 +156,7 @@ def test_capability_registry():
                                          "seo_heartbeat",
                                          "discord_provision_alerts", "drive_to_social", "offpage_syndicate",
                                          "offpage_listen_reddit", "offpage_reply_draft", "offpage_decide",
-                                         "offpage_reply_standing", "clipnet_dispatch", "clipnet_publish", "clipnet_outcomes"}
+                                         "offpage_reply_standing", "clipnet_dispatch", "clipnet_publish", "clipnet_outcomes", "clipnet_discover", "clipnet_publish_slots", "clipnet_learn", "clipnet_refresh_queries", "clipnet_purge"}
     assert capabilities.get("nope") is None
 
 

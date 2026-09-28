@@ -22,7 +22,7 @@ If `{{product_image}}` is not provided, ask the user to upload their product pho
 
 Once the photo is available, submit the plan with ONE step to re-render the product in a premium setting:
 
-1. **Product Rendering** — `muapi image edit` (model=`flux-2-pro-edit`):
+1. **Product Rendering** — `muapi image edit` (model=`nano-banana-pro-edit`):
    - Reference Image: `{{product_image}}`
    - Prompt: `A high-end, professional commercial photograph of the product from the reference image, {{scene_description}}. Soft studio lighting, realistic reflections, cinematic depth of field, sharp focus on the product. 8k resolution, elegant and minimal composition.`
    - Aspect ratio: 1:1 or 4:5

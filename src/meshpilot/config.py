@@ -137,9 +137,13 @@ class Settings(BaseSettings):
     replicate_api_token: str = ""
     replicate_image_model: str = "recraft-ai/recraft-v3"
 
-    # --- Image generation (fal.ai) — primary provider, faster + cheaper ---
-    fal_api_key: str = ""
-    fal_image_model: str = "fal-ai/flux/schnell"
+    # --- Image generation (MUapi) — plates only; type/logos composited in Pillow ---
+    # ⚠️ FLUX/fal REMOVED 2026-09-26. FLUX schnell was the default at ~$0.003/image
+    # and could not compose a scene or render legible type; a thumbnail is the one
+    # image that decides the click, so the cheap model was the wrong saving.
+    # Images now go through MUapi, which the project already pays for.
+    muapi_image_model: str = "nano-banana-pro"        # Gemini 3 Pro Image
+    muapi_image_model_cheap: str = "nano-banana-2-lite"  # bulk plates
 
     # --- Image generation (Leonardo.ai) — poster/typography-style backgrounds ---
     # Used for slide + quote-card backgrounds. We never ask Leonardo to render
@@ -172,6 +176,9 @@ class Settings(BaseSettings):
     # --- Platforms (Phase 1: YouTube) ---
     youtube_client_secrets_file: str = "credentials/youtube_client_secrets.json"
     youtube_channel_id: str = ""
+    # YouTube Data API v3 key — public search only (CLIPNET-DISCOVER). Not an OAuth credential:
+    # it reads public video/channel facts and can never post.
+    youtube_api_key: str = ""
     # Phase 2
     twitter_api_key: str = ""
     twitter_api_secret: str = ""

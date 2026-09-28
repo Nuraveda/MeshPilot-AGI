@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import html as _html_escape
+import os
 import pathlib
 
 import structlog
@@ -166,7 +167,9 @@ async def _scheduler_loop() -> None:
         try:
             n = await cron_service.sweep()
             if n:
-                log.info("scheduler.swept", jobs=n)
+                # OPS-MEM-1: busy sweeps are what ratcheted RSS up; trim after each and log both sides.
+                from meshpilot.memwatch import trim_and_measure
+                log.info("scheduler.swept", jobs=n, **trim_and_measure())
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -204,6 +207,9 @@ async def healthz() -> dict:
         "status": "ok",
         "service": "meshpilot",
         "version": __version__,
+        # OPS-BOX-1: the image tag the box is running (set by deploy/vm run-api.sh), so CI can prove a
+        # deploy landed. A 7-char commit sha, public anyway; None on hosts that do not set it.
+        "build": os.environ.get("MESHPILOT_BUILD") or None,
         "dispatch_mode": settings().dispatch_mode,
         "scheduler": {"cron_enabled": bool(getattr(settings(), "agent_cron_enabled", False))},
     }

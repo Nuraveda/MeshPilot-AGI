@@ -1,4 +1,7 @@
-"""CLIPNET Discord notices: post results back to the brand's #clip-queue channel.
+"""CLIPNET Discord notices to the brand's #clip-queue channel: blocked clips and creator notices.
+
+The "📣 Posted" summary built by `published_message` goes to #posts-<brand> instead (see
+`publish._announce`), so posting alerts land in exactly one channel.
 
 The channel is `<PREFIX>_CLIPNET_DISCORD_CHANNEL_ID`; the bot token is the agent's own
 DISCORD_BOT_TOKEN (agent infrastructure, like the Discord bridge — not a brand credential).

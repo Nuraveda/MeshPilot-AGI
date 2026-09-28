@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="AGPL-3.0">
-  <img src="https://img.shields.io/badge/brain-Claude%20via%20OpenRouter-d4a373" alt="Brain: Claude via OpenRouter">
+  <img src="https://img.shields.io/badge/brain-OpenRouter%20tiered%20router-d4a373" alt="Brain: OpenRouter tiered router">
   <img src="https://img.shields.io/badge/host-FastAPI%20Cloud-009688" alt="FastAPI Cloud">
 </p>
 
@@ -124,8 +124,8 @@ ReAct; the old `parse_action` parser is gone). Per run:
    before-the-fact expectation of the run (`agent/loop/reckoning.py`). Foresight,
    not hindsight.
 2. **Seed recall.** Pull per-brand context from memory.
-3. **Plan.** Call **Claude via OpenRouter** (`agent/loop/llm.py`) with the offered
-   tool definitions; the model returns `tool_use` blocks.
+3. **Plan.** Call the **tiered router, via OpenRouter** (`agent/loop/llm.py`) with
+   the offered tool definitions; the model returns `tool_use` blocks.
 4. **Scope check → policy gate.** Two independent layers:
    - **Scope** (`agent/loop/scopes.py`) decides which tools are even *offered* this
      run (`chat` default / `discovery` / `content_draft` / `content` / `orm` /
@@ -150,13 +150,29 @@ ReAct; the old `parse_action` parser is gone). Per run:
 
 ### Model router
 
-`agent/loop/routing.py` maps a task **tier** — `critical` / `complex` (default) /
-`moderate` / `simple` — to an **ordered list of models**, sent to OpenRouter as its
-`models` array so **failover across providers is native** (e.g. `complex` =
-`anthropic/claude-sonnet-5` → `z-ai/glm-5.3` → `moonshotai/kimi-k3`). Models are
-still Claude slugs by default, normalized via a `_MODEL_MAP`. An env override
-`AGENT_ROUTER_<TIER>` (comma-separated slugs) pins a tier. Anthropic-only features
-(prompt caching, `output_config.effort`) are **not** sent over OpenRouter.
+`agent/loop/routing.py` maps a task **tier** — `critical` / `complex` (default,
+the main reasoning loop's tier) / `moderate` / `simple` — to an **ordered list of
+models**, sent to OpenRouter as its `models` array so **failover across
+providers is native**:
+
+| Tier | Order (primary → fallbacks) |
+|---|---|
+| `critical` | `anthropic/claude-opus-5` → `anthropic/claude-opus-4.8` → `openai/gpt-5.6-sol` |
+| `complex` (default) | `z-ai/glm-5.3` → `anthropic/claude-sonnet-5` → `anthropic/claude-sonnet-4.6` |
+| `moderate` | `z-ai/glm-5.2` → `openai/gpt-5.6-luna` → `deepseek/deepseek-v4-pro` |
+| `simple` | `openai/gpt-6-luna` → `anthropic/claude-haiku-4.5` → `z-ai/glm-5.3-flash` |
+
+`critical` stays quality-first (an irreversible decision is the wrong place to
+save a fraction of a cent); `complex` is cost-first, ahead of Claude, measured
+against the brain-loop workload. Claude models sit in three of the four tiers —
+`moderate` has none — so "Claude is the brain" is a simplification: the brain
+runs on whichever tier's primary answers, reached through the same OpenRouter
+router. The one call site with **no** explicit tier (`agent/loop/llm.py`) falls
+back to a plain default model, currently `openai/gpt-6-luna-pro`, not a Claude
+slug. An env override `AGENT_ROUTER_<TIER>` (comma-separated slugs) pins a
+tier; `AGENT_LLM_MODEL` overrides the no-tier default directly. Anthropic-only
+features (prompt caching, `output_config.effort`) are **not** sent over
+OpenRouter.
 
 A data-grounded **audit** (`agent/loop/audit.py`) reads `usage_events` and flags
 `primary_idle` (a tier's primary model served 0 calls while a fallback did —
@@ -303,9 +319,28 @@ composer. Endpoints: `/internal/media/{recipes,generate,ensure-bucket}`.
 
 Generated assets are persisted to **per-brand Supabase Storage buckets**
 (`<env_prefix>-media`) so links don't expire, and the durable public URL is
-returned. **Content *text* (captions, scripts, replies) runs on Claude**, not
-MUapi — `agent/llm.py::chat()` routes `cheap`→`simple` / `smart`→`complex` through
-the same OpenRouter router. Deterministic image edits use Pillow (`edit_image`).
+returned. **Content *text* (captions, scripts, replies) goes through the same
+tiered router**, not MUapi — `agent/llm.py::chat()` maps `cheap`→`simple` /
+`smart`→`complex` and lets the router pick the model, so it is Claude only when
+a tier's primary is. Deterministic image edits use Pillow (`edit_image`).
+
+### ClipNet (long-form → short clips)
+
+CLIPNET turns long-form source video into short vertical clips and publishes them
+through the same gated publishers (`clip-worker/` renders, the API dispatches and
+posts). Two Discord channels split by role: `<PREFIX>_CLIPNET_DISCORD_CHANNEL_ID`
+carries job intake plus blocked/creator notices; each *published* clip is a
+separate message in the brand's own posts channel
+(`<PREFIX>_POSTS_DISCORD_CHANNEL_ID`, `comms/post_alerts.py`) — the same channel
+every other publisher announces into, so "did the agent post anything" has one
+place to look regardless of which pipeline did it.
+
+A `clipnet_post` row is reserved before each platform call and settled after.
+If the process dies mid-publish, the row is left `reserved` rather than retried
+blindly — a blind retry of a call that actually went through would double-post.
+Each publish tick reconciles stale reserved rows against the publisher's own
+record of what actually sent (`agent/clipnet/reconcile.py`) before deciding
+`posted` vs safe-to-retry `failed`.
 
 ---
 
@@ -331,9 +366,10 @@ subsystem as maintenance-only unless a lane says otherwise.
 `gateway/` is a **thin Discord bridge — not a second agent**. It forwards a channel
 message to `POST /internal/agent/run?brand=` (with `x-jobs-token`), polls
 `GET /internal/agent/run/{id}` until the run finishes, and posts the reply back.
-Deployed on **Railway** via watch-paths (`gateway/**`) straight from `production`
-(the old `gateway-production` branch was retired 2026-08-30). Telegram / WhatsApp
-adapters would follow the same pattern.
+It is **one always-on container anywhere; exactly one copy per bot token** — a
+long poll or a Discord gateway connection does not tolerate more than one reader
+without duplicate/dropped replies. See [`gateway/README.md`](gateway/README.md)
+for the deploy shape. Telegram / WhatsApp adapters would follow the same pattern.
 
 ---
 

@@ -74,8 +74,6 @@ dependencies = [
   "google-auth-httplib2>=0.2",
   # Replicate — image generation via recraft-v3 / FLUX for LinkedIn image posts.
   "replicate>=1.0",
-  # fal.ai — primary image generation provider (FLUX.1-schnell, fast + cheap).
-  "fal-client>=0.5",
   # img2pdf — lossless PNG→PDF for LinkedIn carousel document posts.
   "img2pdf>=0.5",
   "croniter>=6.2.4",

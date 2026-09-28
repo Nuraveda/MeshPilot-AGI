@@ -84,3 +84,43 @@ async def test_buffer_create_post_announces(monkeypatch):
 def test_an_unknown_brand_never_raises_from_the_lookup():
     """brand_env raises KeyError for an unregistered brand; the alert path must swallow it."""
     assert post_alerts.channel_for("no_such_brand_anywhere") == ""
+
+
+# ── ALERTS-ONE-CHANNEL: one clip publish = one message, in #posts-<brand> ─────────────────────────
+async def test_suppressed_blocks_the_per_platform_alert_and_restores_after(monkeypatch):
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "t")
+    monkeypatch.setattr(post_alerts, "channel_for", lambda b: "555")
+    sent = []
+
+    async def send(**k):
+        sent.append(k)
+    with post_alerts.suppressed():
+        assert await post_alerts.announce_post("ai_empire", "x", url="u", send=send) is False
+    assert sent == []
+    assert await post_alerts.announce_post("ai_empire", "x", url="u", send=send) is True
+    assert len(sent) == 1
+
+
+async def test_clipnet_publishes_quietly_and_sends_its_summary_to_the_posts_channel(monkeypatch):
+    """The bug: every platform publisher alerted #posts-<brand> AND ClipNet sent its own
+    "📣 Posted" to #clip-queue. Now the publisher's alert is suppressed for ClipNet, and ClipNet's
+    summary lands in the posts channel — nothing reaches #clip-queue for a successful post."""
+    from meshpilot.agent.clipnet import notify as clip_notify
+    from meshpilot.agent.clipnet import publish
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "t")
+    monkeypatch.setattr(post_alerts, "channel_for", lambda b: "POSTS")
+    monkeypatch.setattr(clip_notify, "channel_for", lambda b: "CLIPQ")
+    sent = []
+
+    async def fake_send(*, token, channel_id, content):
+        sent.append(channel_id)
+    import meshpilot.comms.discord as discord
+    monkeypatch.setattr(discord, "post_message", fake_send)
+
+    async def publisher(p, brand_id, clip, campaign):      # a real publisher alerts on success
+        await post_alerts.announce_post(brand_id, p, url="https://x/1")
+        return "ext-1", "https://x/1"
+    assert await publish._post_quietly(publisher, "x", "ai_empire", {}, None) == ("ext-1", "https://x/1")
+    await publish._announce("ai_empire", "📣 **Posted:** hook")
+    assert sent == ["POSTS"]

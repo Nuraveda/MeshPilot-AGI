@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from io import BytesIO
+from typing import Any
 
 from PIL import Image, ImageDraw
 
@@ -23,9 +24,9 @@ from meshpilot.media.render.card import (
     SIZES,
     Palette,
     _clip_words,
+    _draw_tracked,
     _fit_headline,
     _font,
-    _draw_tracked,
     _wrap,
 )
 
@@ -86,6 +87,23 @@ def _kicker(draw, spec: Spec, w: int, margin: int, y: int) -> int:
     rule_h = max(3, int(w * 0.004))
     draw.rectangle([margin, y, margin + int(w * 0.10), y + rule_h], fill=p.accent)
     return y + rule_h
+
+
+def _footer_h(spec: Spec, w: int, h: int, margin: int) -> int:
+    """Height the footer lockup actually occupies, measured from the SAME numbers `_wordmark`
+    draws with.
+
+    Every layout used to reserve a flat fraction of the height (0.15/0.17). That fraction is
+    smaller than the logo lockup at 16:9 — the mark is sized off the WIDTH (w*0.085) and sits a
+    full margin above the bottom edge, so at 1920x1080 it starts ~150px above the band the
+    layouts were protecting, and the copy above it collided with the logo. Deriving the number
+    here instead of guessing it is what keeps the two in step when either changes.
+    """
+    if spec.wordmark_logo is not None:
+        return margin + int(w * 0.085)
+    if spec.content.wordmark:
+        return margin + int(w * 0.019) * 2
+    return margin
 
 
 def _wordmark(draw, spec: Spec, w: int, h: int, margin: int, img: Image.Image | None = None) -> None:
@@ -183,23 +201,50 @@ def _para(draw, text: str, font, fill, x: int, y: int, max_w: int, leading: int)
 
 # ── layouts ─────────────────────────────────────────────────────────────────────────────────────
 
+def statement_geometry(spec: Spec) -> dict:
+    """Lay `statement` out without drawing, so the geometry can be asserted directly.
+
+    Split out because the headline used to be fitted into ALL the space above the footer and the
+    subhead was then stacked *underneath* it — so any card carrying both overran the footer band
+    and the headline collided with the wordmark and logo. The subhead must be measured BEFORE the
+    headline is fitted; that ordering is the fix, and this function is what makes it testable.
+    """
+    w, h = SIZES.get(spec.fmt, SIZES[DEFAULT_FORMAT])
+    margin = int(w * 0.09)
+    p, c = spec.palette, spec.content
+    content_w = w - margin * 2
+    footer = _footer_h(spec, w, h, margin)
+
+    kicker_h = (int(w * 0.021 * 2.4) if c.kicker else 0) + max(3, int(w * 0.004)) + int(h * 0.045)
+
+    # Measure the subhead FIRST — it is stacked below the headline, so its height is not available
+    # to the headline. Fitting the headline before knowing this is what caused the overrun.
+    sub_font = _font(False, int(w * 0.030))
+    sub_lines = _wrap(_SCRATCH, c.subhead, sub_font, content_w) if c.subhead else []
+    sub_leading = int(w * 0.030 * 1.45)
+    sub_gap = int(h * 0.028) if sub_lines else 0
+    sub_h = sub_gap + len(sub_lines) * sub_leading
+
+    hl_font, lines, leading = _fit_headline(_SCRATCH, c.headline, content_w,
+                                            h - margin - footer - kicker_h - sub_h,
+                                            start=int(w * 0.082 * p.font_scale))
+    block = kicker_h + len(lines) * leading + sub_h
+    y = margin + int(max(0, h - margin - footer - block) * 0.44)
+    return {"w": w, "h": h, "margin": margin, "content_w": content_w, "footer": footer,
+            "kicker_h": kicker_h, "hl_font": hl_font, "lines": lines, "leading": leading,
+            "sub_font": sub_font, "sub_lines": sub_lines, "sub_leading": sub_leading,
+            "sub_gap": sub_gap, "block": block, "y": y, "bottom": y + block}
+
+
 def statement(spec: Spec) -> bytes:
     """The sharp one-liner, set large. The workhorse — but only one voice among several."""
     img, draw, w, h, margin = _canvas(spec)
     p, c = spec.palette, spec.content
-    content_w = w - margin * 2
-    footer = int(h * 0.17)
-
-    kicker_h = (int(w * 0.021 * 2.4) if c.kicker else 0) + max(3, int(w * 0.004)) + int(h * 0.045)
-    hl_font, lines, leading = _fit_headline(draw, c.headline, content_w,
-                                            h - margin - footer - kicker_h,
-                                            start=int(w * 0.082 * p.font_scale))
-    sub_font = _font(False, int(w * 0.030))
-    sub_lines = _wrap(draw, c.subhead, sub_font, content_w) if c.subhead else []
-    sub_leading = int(w * 0.030 * 1.45)
-    block = kicker_h + len(lines) * leading + (int(h * 0.028) + len(sub_lines) * sub_leading
-                                               if sub_lines else 0)
-    y = margin + int(max(0, h - margin - footer - block) * 0.44)
+    g = statement_geometry(spec)
+    content_w = g["content_w"]
+    hl_font, lines, leading = g["hl_font"], g["lines"], g["leading"]
+    sub_font, sub_lines, sub_leading = g["sub_font"], g["sub_lines"], g["sub_leading"]
+    y = g["y"]
 
     y = _kicker(draw, spec, w, margin, y) + int(h * 0.045)
     for ln in lines:
@@ -226,7 +271,7 @@ def comparison(spec: Spec) -> bytes:
     body_f = _font(False, int(w * 0.032))
     body_leading = int(w * 0.032 * 1.42)
     panel_gap = int(h * 0.035)
-    footer = int(h * 0.15)
+    footer = _footer_h(spec, w, h, margin)
 
     chrome_h = (int(w * 0.021 * 2.4) if c.kicker else 0) + max(3, int(w * 0.004)) + int(h * 0.04)
     hf = lines = leading = None
@@ -291,7 +336,7 @@ def definition(spec: Spec) -> bytes:
 
     body_f = _font(False, int(w * 0.034))
     body_leading = int(w * 0.034 * 1.45)
-    footer = int(h * 0.15)
+    footer = _footer_h(spec, w, h, margin)
     tf, lines, leading = _fit_headline(_SCRATCH, c.term or c.headline, content_w, int(h * 0.30),
                                        start=int(w * 0.090))
     chrome_h = (int(w * 0.021 * 2.4) if c.kicker else 0) + max(3, int(w * 0.004)) + int(h * 0.06)
@@ -318,7 +363,7 @@ def numbered(spec: Spec) -> bytes:
     item_f = _font(False, int(w * 0.032))
     leading_i = int(w * 0.032 * 1.42)
     indent = int(w * 0.075)
-    footer = int(h * 0.15)
+    footer = _footer_h(spec, w, h, margin)
 
     chrome_h = (int(w * 0.021 * 2.4) if c.kicker else 0) + max(3, int(w * 0.004)) + int(h * 0.04)
     hf = lines = leading = None
@@ -360,7 +405,7 @@ def mechanism(spec: Spec) -> bytes:
     plot_h = int(h * 0.30)
     sub_f = _font(False, int(w * 0.030))
     sub_leading = int(w * 0.030 * 1.45)
-    footer = int(h * 0.15)
+    footer = _footer_h(spec, w, h, margin)
     chrome_h = (int(w * 0.021 * 2.4) if c.kicker else 0) + max(3, int(w * 0.004)) + int(h * 0.04)
     hf = lines = leading = None
     head_h = 0

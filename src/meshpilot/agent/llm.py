@@ -6,7 +6,7 @@ generation (nodes, media captions, sheet_posting, influencer) goes through **Cla
 multimodal `image_url` blocks, passes native `document`/`image` blocks through, and meters to the
 per-brand budget (COST-METER).
 
-`tier` selects a Claude model — `cheap` → Haiku 4.5, `smart` → Sonnet 5 (env overrides
+`tier` selects a ROUTER tier — `cheap` → `simple` (gpt-6-luna, Haiku fallback), `smart` → `complex` (env overrides
 `AGENT_CONTENT_MODEL_CHEAP` / `_SMART`, or the legacy per-tier `AGENT_CONTENT_TEXT_MODEL_<TIER>`).
 `temperature` is accepted for call-site compatibility but not forwarded (current-gen models 400 on
 it). `client` is injectable for tests.

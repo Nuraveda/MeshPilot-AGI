@@ -15,7 +15,7 @@ publishers actually publish.
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Built with FastAPI](https://img.shields.io/badge/built%20with-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
-[![Brain: Claude](https://img.shields.io/badge/brain-Claude-d4a373.svg)](https://www.anthropic.com/)
+[![Brain: OpenRouter](https://img.shields.io/badge/brain-OpenRouter%20tiered%20router-d4a373.svg)](https://openrouter.ai/)
 [![CI](https://img.shields.io/github/actions/workflow/status/Nuraveda-Labs/meshpilot-digital-marketing-agent/ci.yml?branch=production&label=CI)](../../actions)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Stars](https://img.shields.io/github/stars/Nuraveda-Labs/meshpilot-digital-marketing-agent?style=social)](../../stargazers)
@@ -185,12 +185,13 @@ is always MeshPilot; the gateway is dumb plumbing (message in → `/internal/age
 
 ## How it works (the architecture)
 
-Two model backends, split by job. **Claude — reached through OpenRouter** — is the
+Two model backends, split by job. A **tiered model router, reached through
+OpenRouter** — Claude sits in three of its four tiers, not all of them — is the
 agent's *brain* (multi-step reasoning via **native tool use**) **and writes the
 copy** (captions, scripts, replies). **MUapi** is the *media factory* (one gateway
-for image and video generation). A quality-first **model router** picks the model
-per task and **fails over across providers** automatically. The agent never
-confuses the brain from the media factory.
+for image and video generation). The router picks the model per task tier and
+**fails over across providers** automatically. The agent never confuses the
+brain from the media factory.
 
 ```mermaid
 flowchart TB
@@ -200,7 +201,7 @@ flowchart TB
     subgraph App["FastAPI Cloud — the agent (meshpilot)"]
       API["HTTP surface<br/>/internal/agent/* · /internal/media/* · /internal/analytics/* · /jobs/*"]
       SCHED["Scheduler + self-cron<br/>~30s tick · exactly-once jobs"]
-      subgraph Brain["The Brain — Claude via OpenRouter"]
+      subgraph Brain["The Brain — tiered router via OpenRouter"]
         ROUTER["Router · tier → model + cross-provider failover"]
         LOOP["Loop · native tool-use runner"]
         SCOPE["Scope · which tools are OFFERED"]
@@ -273,11 +274,15 @@ All live and verified:
 - **LOOP** — a **native tool-use** runner over **Claude** (`tool_use` → `tool_result`,
   parallel-safe) that recalls, plans, calls tools, and writes an episode;
   backgrounded + DB-backed for the cloud. `agent/loop/`.
-- **ROUTER** — a quality-first model router: each task tier (`critical` / `complex` /
-  `moderate` / `simple`) maps to an ordered model list sent as OpenRouter's `models`
-  array, so failover across providers is native (Claude → GLM → Kimi, …). Env
-  override `AGENT_ROUTER_<TIER>`. A data-grounded **audit** (`audit.py`) reads
-  `usage_events` and flags `primary_idle` / `cost_per_call_drift`. `agent/loop/routing.py`.
+- **ROUTER** — each task tier (`critical` quality-first / `complex` (the brain
+  loop's default, cost-first) / `moderate` / `simple`) maps to an ordered model
+  list sent as OpenRouter's `models` array, so failover across providers is
+  native. Claude models appear in `critical`, `complex` and `simple` — not
+  `moderate` — alongside GLM, GPT and DeepSeek slugs; the one no-tier call site
+  falls back to a plain default model that is **not** a Claude slug. Env
+  override `AGENT_ROUTER_<TIER>` pins a tier; `AGENT_LLM_MODEL` overrides the
+  no-tier default. A data-grounded **audit** (`audit.py`) reads `usage_events`
+  and flags `primary_idle` / `cost_per_call_drift`. `agent/loop/routing.py`.
 - **POLICY** — a deterministic allow/deny gate run before every tool: per-brand
   denies, **kill-switches** (publish / web / email / discovery), and per-run +
   per-brand-daily cost budgets. `agent/loop/policy.py`.
@@ -317,7 +322,7 @@ Patterns adapted from **Hermes** (memory-first + curator) and **OpenClaw**
 | Database | **Supabase Postgres** (asyncpg, SQLModel/SQLAlchemy) | `agent_memory`, `agent_runs`, `oauth_tokens`, … |
 | Vectors | **pgvector** (`halfvec`, HNSW) | semantic recall in `agent_memory` |
 | Object storage | **Supabase Storage** | per-brand media buckets (`<prefix>-media`) |
-| Brain LLM | **Claude via OpenRouter** (OpenAI-compatible) | native tool-use loop + curator + content copy; model **router** with cross-provider failover |
+| Brain LLM | **Tiered router via OpenRouter** (OpenAI-compatible) | native tool-use loop + curator + content copy; Claude models sit in 3 of 4 tiers, cross-provider failover |
 | Embeddings | **NVIDIA NIM** (nemotron) | memory recall |
 | Media — generate | **MUapi** (image/video) · **HeyGen** (avatar video, via MCP) · **Higgsfield** (Soul/DoP) | pluggable `Engine` protocol (text moved to Claude) |
 | Media — edit | **Pillow** | native deterministic `edit_image` |
@@ -359,7 +364,7 @@ nothing here depends on that choice.
 | Surface | What |
 |---|---|
 | `/` (your own host) | The agent |
-| `/healthz` | Liveness (exempt from auth + rate limit) |
+| `/healthz` (alias `/health`) | Liveness (exempt from auth + rate limit); also returns `build` — the running image tag / commit sha from `MESHPILOT_BUILD`, `null` when unset |
 | `/internal/agent/{remember,recall,run,curate}` + `GET /internal/agent/run/{id}` | Brain: memory, backgrounded loop, curator (jobs-auth) |
 | `/internal/agent/pipeline/{name}` + `/schedule` | Run or schedule a discovery/content/orm pipeline (409 if its switch is off) |
 | `/internal/agent/routing/{metrics,audit}` | Per-worker routing metrics + data-grounded routing audit |
@@ -370,8 +375,10 @@ nothing here depends on that choice.
 | `/internal/{buffer,facebook,instagram,youtube}/*` | Publisher test/introspection endpoints (gated) |
 | `/jobs/{scout,drive_scout,assemble}` | Legacy LangGraph content pipeline (superseded by the brain; still live) |
 
-- **LLM split:** **Claude via OpenRouter** is the brain **and writes the copy**
-  (`OPENROUTER_API_KEY`, models still Claude slugs, router picks the tier);
+- **LLM split:** the **tiered router, via OpenRouter** (Claude in 3 of 4 tiers)
+  is the brain **and writes the copy**
+  (`OPENROUTER_API_KEY`, router picks the tier; the no-tier default model is
+  not a Claude slug);
   **MUapi = image/video only** (`MUAPI_API_KEY`). `ANTHROPIC_API_KEY` is used only
   for the Files API (brand-doc grounding). Embeddings via **NVIDIA NIM**.
 - **Data:** Supabase Postgres + Storage buckets (your own project).
@@ -386,8 +393,9 @@ nothing here depends on that choice.
   this. The same dispatch is endpoint-reachable, so an external cron or any
   always-on container can drive it; ours is the Discord gateway, which has to be
   always-on anyway. "No server" is not a thing this or any agent truly gets.
-- **Chat control plane:** a small Discord bridge ([`gateway/`](gateway/), one
-  always-on container on Railway) relays `#agent-chat` messages to
+- **Chat control plane:** a small Discord bridge ([`gateway/`](gateway/) — one
+  always-on container, anywhere you like, exactly one copy per bot token; see
+  [`gateway/README.md`](gateway/README.md)) relays `#agent-chat` messages to
   `/internal/agent/run` and posts the reply back — talk to the agent from Discord.
 
 ---

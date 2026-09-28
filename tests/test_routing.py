@@ -10,7 +10,8 @@ def test_resolve_tiers():
     and stay quality-first — an unmeasured cost flip is how the first attempt went wrong."""
     assert routing.resolve("complex")[0] == "z-ai/glm-5.3"
     assert routing.resolve("moderate")[0] == "z-ai/glm-5.2"
-    assert routing.resolve("simple")[0] == "anthropic/claude-haiku-4.5"
+    # ROUTER-LUNA 2026-09-28: `simple` is now measured cost-first — gpt-6-luna, Haiku kept as fallback.
+    assert routing.resolve("simple")[:2] == ["openai/gpt-6-luna", "anthropic/claude-haiku-4.5"]
     assert routing.resolve("critical")[0] == "anthropic/claude-opus-5"
 
 def test_resolve_unknown_defaults_to_complex():

@@ -219,6 +219,41 @@ async def _cap_clipnet_publish(brand_id: str, args: dict) -> dict:
     return await publish_next(brand_id)
 
 
+async def _cap_clipnet_publish_slots(brand_id: str, args: dict) -> dict:
+    """PLATFORM-TIMING: post each platform's next clip in its own best-time slot, ≥ min gap apart."""
+    from meshpilot.agent.clipnet.publish import publish_due
+
+    return await publish_due(brand_id)
+
+
+async def _cap_clipnet_learn(brand_id: str, args: dict) -> dict:
+    """CLIPNET-LEARN L3: score measured clips, write lessons (≥ N), prune consistently flopping creators."""
+    from meshpilot.agent.clipnet.learn import learn
+
+    return await learn(brand_id)
+
+
+async def _cap_clipnet_refresh_queries(brand_id: str, args: dict) -> dict:
+    """CLIPNET-LEARN L3: weekly, the agent retires flopping searches and proposes new in-niche ones."""
+    from meshpilot.agent.clipnet.learn import refresh_queries
+
+    return await refresh_queries(brand_id)
+
+
+async def _cap_clipnet_purge(brand_id: str, args: dict) -> dict:
+    """CLIPNET-UNATTENDED: delete clip files every platform already has (or that went stale)."""
+    from meshpilot.agent.clipnet.purge import purge
+
+    return await purge(brand_id)
+
+
+async def _cap_clipnet_discover(brand_id: str, args: dict) -> dict:
+    """CLIPNET-DISCOVER: queue today's trending videos from independent creators in the brand's niche."""
+    from meshpilot.agent.clipnet.discover import discover
+
+    return await discover(brand_id)
+
+
 async def _cap_clipnet_outcomes(brand_id: str, args: dict) -> dict:
     """CLIPNET-LEARN L2: take each posted clip's 1h / 24h / 7d reading once, when due."""
     from meshpilot.agent.clipnet.outcomes import collect
@@ -248,6 +283,11 @@ _REGISTRY: dict[str, CapFn] = {
     "clipnet_dispatch": _cap_clipnet_dispatch,
     "clipnet_publish": _cap_clipnet_publish,
     "clipnet_outcomes": _cap_clipnet_outcomes,
+    "clipnet_discover": _cap_clipnet_discover,
+    "clipnet_publish_slots": _cap_clipnet_publish_slots,
+    "clipnet_learn": _cap_clipnet_learn,
+    "clipnet_refresh_queries": _cap_clipnet_refresh_queries,
+    "clipnet_purge": _cap_clipnet_purge,
 }
 
 
@@ -291,6 +331,16 @@ REQUIRED_CAPABILITIES: dict[str, frozenset[str]] = {
     "clipnet_publish": frozenset({"publish"}),
     # Reads our own posts' stats back; grants nothing outward.
     "clipnet_outcomes": frozenset(),
+    # Searches public YouTube and queues jobs (which then spend money via clipnet_dispatch).
+    "clipnet_discover": frozenset({"discovery"}),
+    # Same outward reach as clipnet_publish, spread over each platform's slots.
+    "clipnet_publish_slots": frozenset({"publish"}),
+    # Writes the brand's own memory and blocklist; nothing outward.
+    "clipnet_learn": frozenset(),
+    # Rewrites the brand's discovery searches (which then drive paid clip jobs).
+    "clipnet_refresh_queries": frozenset({"discovery"}),
+    # Deletes the brand's own already-posted clip files; nothing outward.
+    "clipnet_purge": frozenset(),
 }
 
 

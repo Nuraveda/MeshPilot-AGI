@@ -23,7 +23,7 @@ non-default `MESHPILOT_BRAND` would 401/400 without it. It stays in the run POST
 must match the query value.
 
 Discord free-form chat needs a persistent gateway (websocket) connection, which is why this
-runs as one always-on container (Railway, one replica) rather than on the stateless agent host.
+runs as one always-on container (one replica) rather than on the stateless agent host.
 
 **It also holds the API awake (SCHED-1).** Because this container is already on 24/7, it runs a
 `/healthz` heartbeat every `KEEPALIVE_INTERVAL_S` (default **600s**). FastAPI Cloud scales the
@@ -50,10 +50,18 @@ Enable **Message Content Intent** for the bot in the Discord developer portal, o
 messages. Access control is the channel itself — `#agent-chat` is private (team + bot only), so
 anyone who can post there is authorized.
 
-## Deploy (Railway)
+## Deploy
 
-Builds from the `Dockerfile` (Railway root dir = `gateway`). Set the env vars above in the service.
-No inbound port (it's a websocket client), so it needs no public domain or healthcheck.
+Run it as **one always-on container** anywhere that can hold an outbound websocket — a small VM
+next to the API, a container service, or `python bridge.py` under a process supervisor. Build from
+this directory's `Dockerfile`, set the env vars above, and point `MESHPILOT_URL` at your API. It
+opens no inbound port, so it needs no domain, TLS or healthcheck.
+
+Tag the image by this folder's content (e.g. `git rev-parse HEAD:gateway`) so an API-only deploy
+does not restart it: every restart drops the Discord websocket and replays the reconnect.
+
+⚠️ A Discord bot token permits only **one** gateway session at a time — run exactly ONE copy, or
+Discord delivers every reply twice. Stop the old instance before starting a new host.
 
 ## Per-project chat routing
 
@@ -78,12 +86,6 @@ the same channel id from `<PREFIX>_CLIPNET_DISCORD_CHANNEL_ID`. A route whose to
 dropped and logged at startup, never guessed. Channels live 2026-09-25: `#clip-queue-ai-empire`,
 `#clip-queue-entertainment-vault`, `#clip-queue-hypedrop-gaming` (MeshPilot category).
 
-⚠️ Railway builds this service from GitHub with **watch paths `gateway/**` + wait-for-CI**. A
-`railway up` upload has no commit/CI and is **SKIPPED** — ship by merging a change under `gateway/`.
-After the 2026-09-23 repo transfer the GitHub source had to be reconnected to
-[this repository](https://github.com/Nuraveda-Labs/meshpilot-digital-marketing-agent) (it had
-not deployed since 2026-09-21).
-
 Why per-channel rather than one global chat: there is **no brand inference from message text**, so
 a message can never silently run as the wrong brand, and a referent like "I don't like that
 content" resolves against the right project's episodes without asking. Authorisation stays scoped
@@ -99,35 +101,14 @@ A route whose token is missing is **dropped at startup with a logged reason**, a
 token is **probed against the API on `on_ready`** — so a stale token is loud immediately instead of
 surfacing the next time someone talks to the agent.
 
-**Auto-deploys from `production`.** Railway watches the **`production`** branch. Watch paths are
-**`/gateway/**` + `!/gateway/README.md`**, set on the service (verified 2026-09-19).
-
-⚠️ They were **EMPTY until 2026-09-19**, despite this file claiming otherwise. Empty watch paths
-mean Railway redeploys on EVERY push to `production`, and each gateway deploy drops the websocket
-(see the reconnect gap below) — so an unrelated merge, a docs change, a dependabot bump, all
-silently cost a message in `#agent-chat`. On 2026-09-19 alone that happened 8+ times. If this
-section ever disagrees with the service again, trust the service:
-`railway api 'query { project(id: "83c226d5-735c-4ef1-adf5-c1972bfdca5a") { services { edges { node { name serviceInstances { edges { node { watchPatterns } } } } } } } }'`
-
-⚠️ Watch patterns are **repo-root relative even though this service sets `rootDirectory: gateway`**
-— Railway's docs: "if a Root Directory is provided, patterns still operate from `/`". So the
-pattern is `/gateway/**`, NOT `/**`. A root-relative guess here silently stops gateway deploys.
-
-It has **wait-for-CI** on, gating on the `gateway` build check (`docker build` + `py_compile`) that
-runs on the `production` push whenever `gateway/**` drifts, so a broken `Dockerfile` or
-`requirements.txt` never reaches a deploy. (`railway up` from this dir still works for a manual one-off.)
-
-**Restart behavior — there is NO zero-downtime handoff.** This is a single-replica (`numReplicas: 1`,
-see `railway.json`) Discord **gateway client**: it holds an *outbound* websocket and has no inbound
-HTTP port, so there is no healthcheck configured and Railway has **no readiness gate** on cutover. On
-each gateway deploy Railway stops the old container and starts the new one; the bridge only becomes
+**Restart behavior — there is NO zero-downtime handoff.** This is a single-replica Discord **gateway client**: it holds an *outbound* websocket and has no inbound
+HTTP port, so there is no healthcheck and **no readiness gate** on cutover. On
+each gateway deploy the old container stops and the new one starts; the bridge only becomes
 usable once its Discord `on_ready` fires (a few seconds after start). A Discord bot token permits only
 **one** gateway session at a time, so the old and new bridges *cannot* overlap — so expect a **brief
 reconnect gap** on every gateway deploy, during which a message posted to `#agent-chat` may be missed
-(resend it). This is why watch paths matter: the gateway redeploys only on real `gateway/` changes,
-keeping these gaps rare. It's a dumb relay, so a momentary gap is acceptable — and a Railway
+(resend it). This is why the image is tagged by this folder's content: the gateway redeploys only on real `gateway/` changes,
+keeping these gaps rare. It's a dumb relay, so a momentary gap is acceptable — and a
 healthcheck would **not** fix it, since a second session on the same token just gets disconnected; the
 only real remedy (Discord session-resume / sharding) is overkill here.
 
-> Retired 2026-08-30: the gateway used to ship by fast-forwarding a separate `gateway-production`
-> branch. That manual dance is gone — Railway now deploys `production` directly via watch paths.

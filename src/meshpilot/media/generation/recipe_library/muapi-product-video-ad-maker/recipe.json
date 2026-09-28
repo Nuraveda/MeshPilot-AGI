@@ -8,7 +8,7 @@
   ],
   "phases": [
     {
-      "id": "render", "op": "image.edit", "model": "flux-2-pro-edit", "prompt_mode": "template",
+      "id": "render", "op": "image.edit", "model": "nano-banana-pro-edit", "prompt_mode": "template",
       "prompt": "A high-end, professional commercial photograph of the product from the reference image, {{scene_description}}. Soft studio lighting, realistic reflections, cinematic depth of field, sharp focus on the product. 8k resolution, elegant and minimal composition.",
       "images": ["{{product_image}}"],
       "params": {"aspect_ratio": "1:1"},

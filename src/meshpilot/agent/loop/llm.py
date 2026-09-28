@@ -29,7 +29,10 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _DEFAULT_BASE = "https://openrouter.ai/api/v1"
-_DEFAULT_MODEL = "anthropic/claude-sonnet-5"
+# ROUTER-LUNA (2026-09-28): gpt-6-luna-pro replaced claude-sonnet-5 as the no-tier default. Measured on
+# three real task shapes (clip pick with traps, tool-use decision, brand-safe copy), 2 runs each:
+# 6/6 pass for both, ~$0.0006/task vs ~$0.0023 (-74%). Restore with AGENT_LLM_MODEL.
+_DEFAULT_MODEL = "openai/gpt-6-luna-pro"
 _RETRYABLE = {429, 500, 502, 503, 529}
 _MAX_ATTEMPTS = 3
 _APP_HEADERS = {"HTTP-Referer": "https://meshpilot.app", "X-Title": "MeshPilot Agent"}

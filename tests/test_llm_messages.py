@@ -64,7 +64,16 @@ async def test_default_model_normalized_to_openrouter_slug(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-x")
     c = _Client(_ok())
     await loop_llm.complete_messages([{"role": "user", "content": "U"}], client=c)
-    assert c.posted["models"] == ["anthropic/claude-sonnet-5"] and c.posted["max_tokens"] == 2048
+    assert c.posted["models"] == ["openai/gpt-6-luna-pro"] and c.posted["max_tokens"] == 2048
+
+
+async def test_agent_llm_model_env_still_overrides_the_default(monkeypatch):
+    """The documented way back to Sonnet must keep working after the default moved to Luna Pro."""
+    monkeypatch.setenv("AGENT_LLM_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-x")
+    c = _Client(_ok())
+    await loop_llm.complete_messages([{"role": "user", "content": "U"}], client=c)
+    assert c.posted["models"] == ["anthropic/claude-sonnet-5"]
 
 
 def test_model_normalization():

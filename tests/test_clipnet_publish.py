@@ -47,6 +47,28 @@ def test_off_subject_clip_text_blocks():
     assert "never mentions the campaign subject" in publish.gate(_clip(stage_outputs=so), CAMPAIGN)
 
 
+def _guest_so(host_ranges, guest="Anton Osika"):
+    return {"source": {"key": "youtube:9FGMhz-e97k"},
+            "picks": [{"start": 316.2, "text": "We built this to help people who could never build."}],
+            "structure": {"host": "Lenny", "guest": guest, "host_ranges": host_ranges}}
+
+
+def test_the_subject_speaking_as_guest_passes_without_saying_the_name():
+    """Measured 2026-09-25: Anton explained Lovable's mission for a minute without saying 'Lovable'."""
+    clip = _clip(stage_outputs=_guest_so([[300.0, 320.0]]), end_s=376.2)   # host holds 3.8 s of 60
+    assert publish.gate(clip, CAMPAIGN) is None
+
+
+def test_the_host_talking_about_the_guest_still_blocks():
+    clip = _clip(stage_outputs=_guest_so([[316.2, 356.2]]), end_s=376.2)   # host holds 40 s of 60
+    assert "never mentions the campaign subject" in publish.gate(clip, CAMPAIGN)
+
+
+def test_a_guest_who_is_not_the_subject_does_not_pass():
+    clip = _clip(stage_outputs=_guest_so([], guest="Someone Else"), end_s=376.2)
+    assert "never mentions the campaign subject" in publish.gate(clip, CAMPAIGN)
+
+
 def test_clip_text_is_matched_to_the_pick_by_start_time():
     so = {"picks": [{"start": 10.0, "text": "a"}, {"start": 316.3, "text": "b"}]}
     assert publish.clip_text(so, 316.2) == "b"

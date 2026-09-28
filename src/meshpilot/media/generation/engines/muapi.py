@@ -4,7 +4,7 @@ Async submit/poll contract (prod-proven in the Mesh Pilot bible):
     submit : POST {base}/{model}                   x-api-key -> {request_id}
     poll   : GET  {base}/predictions/{id}/result             -> {status, outputs:[url]}
 
-The recipes carry **real endpoint slugs** as their `model` (e.g. `flux-2-pro-edit`,
+The recipes carry **real endpoint slugs** as their `model` (e.g. `nano-banana-pro-edit`,
 `wan2.5-image-to-video-fast`), so we POST straight to `{base}/{model}` — no
 hand-curated model→endpoint map to maintain, and new recipes/models work with no
 code change. A tiny `_ALIASES` map only exists for a few legacy friendly names.

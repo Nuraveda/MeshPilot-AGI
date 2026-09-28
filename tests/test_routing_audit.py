@@ -55,7 +55,7 @@ async def test_clean_when_primary_serves_and_no_drift():
     rows = [
         {"model": "z-ai/glm-5.3", "recent_calls": 20, "recent_cost": 2.0,
          "base_calls": 20, "base_cost": 2.0},
-        {"model": "anthropic/claude-haiku-4.5", "recent_calls": 20, "recent_cost": 1.0,
+        {"model": "openai/gpt-6-luna", "recent_calls": 20, "recent_cost": 1.0,
          "base_calls": 20, "base_cost": 1.0},
     ]
     res = await audit.routing_audit(engine=_Engine(rows))

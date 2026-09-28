@@ -121,13 +121,13 @@ async def test_product_video_chains_two_phases_no_llm():
     assert len(eng.calls) == 2
     a, b = eng.calls
     # Phase A: image edit on the product image, default scene filled in
-    assert a["model"] == "flux-2-pro-edit"
+    assert a["model"] == "nano-banana-pro-edit"
     assert a["images"] == ["https://img/p.jpg"]
     assert "fresh flowers and soft morning sunlight" in a["prompt"]  # default applied
     assert a["params"] == {"aspect_ratio": "1:1"}
     # Phase B: animate the premium image from phase A (chaining)
     assert b["model"] == "wan2.5-image-to-video-fast"
-    assert b["images"] == ["https://fake.cdn/flux-2-pro-edit/1.jpg"]  # phase A output chained in
+    assert b["images"] == ["https://fake.cdn/nano-banana-pro-edit/1.jpg"]  # phase A output chained in
     # Asset reflects the final phase
     assert asset.kind == "video"
     assert asset.engine == "fake:wan2.5-image-to-video-fast"
